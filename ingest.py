@@ -55,11 +55,15 @@ def ingest_data():
     # but the requirement is "few million lines", 20k docs * ~10 chunks = ~200k vectors. 
     # Chroma local might be slow with 200k. Let's try 2000 documents first for the MVP.
     
-    MAX_DOCS = 5000 
-    print(f"Processing first {MAX_DOCS} documents for MVP speed...")
+    MAX_DOCS = None # Process all ~20k documents
+    if MAX_DOCS:
+        print(f"Processing first {MAX_DOCS} documents for MVP speed...")
+    else:
+        print("Processing entire dataset...")
     
     import re
-    filename_pattern = r'^([\w\-\.]+\.txt),(.*)$'
+    # More permissive regex for filenames with spaces or other chars
+    filename_pattern = r'^([^\,]+\.txt),(.*)$'
 
     for i, record in enumerate(dataset):
         if i >= MAX_DOCS:

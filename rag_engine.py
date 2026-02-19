@@ -1,5 +1,5 @@
 import os
-import google.generativeai as genai
+
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -29,7 +29,7 @@ def get_rag_chain_internal():
     vectorstore = Chroma(persist_directory=PERSIST_DIRECTORY, embedding_function=embeddings)
     
     # 3. Retriever
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
     # 4. LLM
     llm_provider = os.getenv("LLM_PROVIDER", "google").lower()

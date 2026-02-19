@@ -1,3 +1,4 @@
+google-generativeai
 langchain
 langchain-community
 langchain-chroma
@@ -8,4 +9,3 @@ sentence-transformers
 streamlit
 datasets
 python-dotenv
-google-generativeai

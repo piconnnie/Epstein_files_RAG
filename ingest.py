@@ -64,6 +64,7 @@ def ingest_data():
     BATCH_SIZE = 500
     batch_docs = []
     total_chunks = 0
+    MAX_DOCS = None
     
     import re
     # More permissive regex for filenames with spaces or other chars

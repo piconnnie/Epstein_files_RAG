@@ -70,8 +70,22 @@ def ingest_data():
     # More permissive regex for filenames with spaces or other chars
     filename_pattern = r'^([^\,]+\.txt),(.*)$'
 
-    print("Starting batched ingestion...")
+    print("Starting batched ingestion with aggregation...")
 
+    current_source = None
+    current_content = []
+    
+    # We need to iterate through the dataset and GROUP BY source.
+    # The dataset might not be sorted by source, but let's assume it is somewhat sequential 
+    # or we have to use a dict to hold buffers if it's random access (which is memory intensive).
+    # Inspecting the dataset: it looks like file content is split into lines/rows.
+    # Let's try to aggregate by source. If source changes, we flush the previous source.
+    
+    # Heuristic: If we can't trust order, we might need a different approach.
+    # But for 2M rows, we can't hold all in memory.
+    # Let's assume sequential for now, or use a limited buffer.
+    # Actually, looking at the "Row 0: 13 chars", it looks like OCR lines.
+    
     for i, record in enumerate(dataset):
         if MAX_DOCS and i >= MAX_DOCS:
             break
@@ -88,43 +102,54 @@ def ingest_data():
             if content.startswith('"') and content.endswith('"'):
                 content = content[1:-1]
         else:
-            source = "unknown"
+            # If no filename match, it might be a continuation or a generic line
+            # This dataset seems to have "Filename, Content" format for every row?
+            # If so, we can group by source.
+            source = "unknown" 
             content = text
-            
-        # Split content into chunks
-        chunks = text_splitter.split_text(content)
-        for chunk in chunks:
-            batch_docs.append(Document(page_content=chunk, metadata={"source": source}))
-            
-        # Process batch
-        if len(batch_docs) >= BATCH_SIZE:
-            if vectorstore is None:
-                vectorstore = Chroma.from_documents(
-                    documents=batch_docs, 
-                    embedding=embeddings, 
-                    persist_directory=PERSIST_DIRECTORY
-                )
-            else:
-                vectorstore.add_documents(batch_docs)
-            
-            total_chunks += len(batch_docs)
-            print(f"Processed {total_chunks} chunks...", flush=True)
-            batch_docs = [] # Clear memory
 
-    # Process remaining documents
+        # Aggregation Logic
+        if source != current_source:
+             # New document started, flush previous one
+            if current_source and current_content:
+                full_doc_text = "\n".join(current_content)
+                chunks = text_splitter.split_text(full_doc_text)
+                for chunk in chunks:
+                    batch_docs.append(Document(page_content=chunk, metadata={"source": current_source}))
+                
+                # Check batch size after adding
+                if len(batch_docs) >= BATCH_SIZE:
+                    if vectorstore is None:
+                        vectorstore = Chroma.from_documents(documents=batch_docs, embedding=embeddings, persist_directory=PERSIST_DIRECTORY)
+                    else:
+                        vectorstore.add_documents(batch_docs)
+                    total_chunks += len(batch_docs)
+                    print(f"Processed {total_chunks} chunks...", flush=True)
+                    batch_docs = []
+
+            current_source = source
+            current_content = [content]
+        else:
+            # Same source, append content
+            current_content.append(content)
+
+    # Flush final document
+    if current_source and current_content:
+        full_doc_text = "\n".join(current_content)
+        chunks = text_splitter.split_text(full_doc_text)
+        for chunk in chunks:
+            batch_docs.append(Document(page_content=chunk, metadata={"source": current_source}))
+
+    # Flush final batch
     if batch_docs:
         if vectorstore is None:
-            vectorstore = Chroma.from_documents(
-                documents=batch_docs, 
-                embedding=embeddings, 
-                persist_directory=PERSIST_DIRECTORY
-            )
+            vectorstore = Chroma.from_documents(documents=batch_docs, embedding=embeddings, persist_directory=PERSIST_DIRECTORY)
         else:
             vectorstore.add_documents(batch_docs)
         total_chunks += len(batch_docs)
-        print(f"Processed final batch. Total chunks: {total_chunks}")
     
-    print(f"Ingestion complete. Vector store saved to '{PERSIST_DIRECTORY}'")
+    print(f"Ingestion complete. Total chunks created: {total_chunks}")
+    print(f"Vector store saved to '{PERSIST_DIRECTORY}'")
 
 if __name__ == "__main__":
     ingest_data()

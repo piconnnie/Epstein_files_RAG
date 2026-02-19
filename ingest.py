@@ -66,7 +66,7 @@ def ingest_data():
     filename_pattern = r'^([^\,]+\.txt),(.*)$'
 
     for i, record in enumerate(dataset):
-        if i >= MAX_DOCS:
+        if MAX_DOCS and i >= MAX_DOCS:
             break
         
         text = record.get(text_column, "")

@@ -47,23 +47,29 @@ def ingest_data():
         add_start_index=True,
     )
 
-    docs = []
-    # Limit for MVP to avoid huge time/memory usage if dataset is massive, 
-    # but 20k records is manageable. 
-    # Let's process in batches or just all at once if memory allows.
-    # For safety/speed in MVP demo, let's take first 1000 or so if it's very slow, 
-    # but the requirement is "few million lines", 20k docs * ~10 chunks = ~200k vectors. 
-    # Chroma local might be slow with 200k. Let's try 2000 documents first for the MVP.
+    print(f"Created text splitter.")
     
-    MAX_DOCS = None # Process all ~20k documents
-    if MAX_DOCS:
-        print(f"Processing first {MAX_DOCS} documents for MVP speed...")
-    else:
-        print("Processing entire dataset...")
+    # Create Vector Store (Initialize empty)
+    print(f"Creating Chroma vector store in {PERSIST_DIRECTORY}...")
+    if os.path.exists(PERSIST_DIRECTORY):
+        print("Removing existing vector store...")
+        import shutil
+        shutil.rmtree(PERSIST_DIRECTORY)
+
+    # Initialize VectorStore with the first batch or empty? 
+    # We can't init empty easily with from_documents, so we init with the class constructor
+    # But for simplicity, let's collect the first batch, create the DB, then add the rest.
+    
+    vectorstore = None
+    BATCH_SIZE = 500
+    batch_docs = []
+    total_chunks = 0
     
     import re
     # More permissive regex for filenames with spaces or other chars
     filename_pattern = r'^([^\,]+\.txt),(.*)$'
+
+    print("Starting batched ingestion...")
 
     for i, record in enumerate(dataset):
         if MAX_DOCS and i >= MAX_DOCS:
@@ -78,32 +84,44 @@ def ingest_data():
         if match:
             source = match.group(1)
             content = match.group(2)
-            # Remove wrapping quotes if present
             if content.startswith('"') and content.endswith('"'):
                 content = content[1:-1]
         else:
             source = "unknown"
             content = text
             
-        # Split content into chunks immediately with metadata
+        # Split content into chunks
         chunks = text_splitter.split_text(content)
         for chunk in chunks:
-            docs.append(Document(page_content=chunk, metadata={"source": source}))
+            batch_docs.append(Document(page_content=chunk, metadata={"source": source}))
+            
+        # Process batch
+        if len(batch_docs) >= BATCH_SIZE:
+            if vectorstore is None:
+                vectorstore = Chroma.from_documents(
+                    documents=batch_docs, 
+                    embedding=embeddings, 
+                    persist_directory=PERSIST_DIRECTORY
+                )
+            else:
+                vectorstore.add_documents(batch_docs)
+            
+            total_chunks += len(batch_docs)
+            print(f"Processed {total_chunks} chunks...", flush=True)
+            batch_docs = [] # Clear memory
 
-    print(f"Created {len(docs)} chunks.")
-    
-    # Create Vector Store
-    print(f"Creating Chroma vector store in {PERSIST_DIRECTORY}...")
-    if os.path.exists(PERSIST_DIRECTORY):
-        print("Removing existing vector store...")
-        import shutil
-        shutil.rmtree(PERSIST_DIRECTORY)
-
-    vectorstore = Chroma.from_documents(
-        documents=docs, 
-        embedding=embeddings, 
-        persist_directory=PERSIST_DIRECTORY
-    )
+    # Process remaining documents
+    if batch_docs:
+        if vectorstore is None:
+            vectorstore = Chroma.from_documents(
+                documents=batch_docs, 
+                embedding=embeddings, 
+                persist_directory=PERSIST_DIRECTORY
+            )
+        else:
+            vectorstore.add_documents(batch_docs)
+        total_chunks += len(batch_docs)
+        print(f"Processed final batch. Total chunks: {total_chunks}")
     
     print(f"Ingestion complete. Vector store saved to '{PERSIST_DIRECTORY}'")
 

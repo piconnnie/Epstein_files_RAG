@@ -1,0 +1,26 @@
+# Environment variables
+.env
+
+# Vector Database
+chroma_db/
+chroma_db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.ipynb_checkpoints/
+
+# Virtual Environment
+.venv/
+env/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# Dataset cache
+.cache/
+dataset_inspection.txt
+models_list.txt

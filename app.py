@@ -70,12 +70,31 @@ if "GOOGLE_API_KEY" not in os.environ and "OPENAI_API_KEY" not in os.environ:
     st.stop()
 
 # Initialize Chain
-# @st.cache_resource
+# Check if vector store exists, if not, ingest data (for Cloud Deployment)
+PERSIST_DIRECTORY = "chroma_db"
+
+@st.cache_resource
+def ensure_vector_store():
+    if not os.path.exists(PERSIST_DIRECTORY):
+        with st.spinner("Downloading and processing data (First run only)..."):
+            # Import here to avoid circular imports if any, or just for cleanliness
+            from ingest import ingest_data
+            ingest_data()
+    return True
+
+# Ensure data is ready
+ensure_vector_store()
+
+@st.cache_resource
 def load_chain_v3():
+    # Force reload of chain to pick up any new configuration
     return get_rag_chain()
 
 try:
     qa_chain = load_chain_v3()
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
 except Exception as e:
     st.error(f"Failed to load RAG engine: {e}")
     st.stop()

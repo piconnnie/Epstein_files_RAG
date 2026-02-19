@@ -64,6 +64,24 @@ Open your browser at `http://localhost:8501`.
 - **Rate Limit Handling**: Automatic retries for API constraints.
 - **Model Flexibility**: Switch providers instantly in the sidebar.
 
+## ☁️ Deployment (Streamlit Cloud)
+
+This app is ready for [Streamlit Cloud](https://streamlit.io/cloud).
+
+1. **Push to GitHub**: Ensure your code is on GitHub.
+2. **New App**: Go to Streamlit Cloud -> "New app".
+3. **Select Repo**: Choose this repository.
+4. **Add Secrets**:
+    - Click "Advanced Settings" -> "Secrets".
+    - Add your API key:
+
+        ```toml
+        GOOGLE_API_KEY = "your-key-here"
+        ```
+
+5. **Deploy**: Click "Deploy".
+    - *Note: On first run, the app will automatically download and ingest the dataset. This typically takes 2-3 minutes.*
+
 ## ⚠️ Disclaimer
 
 This tool is for research purposes only. It uses large language models which can occasionally hallucinate or make errors. Always verify claims against the provided source documents. The dataset is sourced publicly from `teyler/epstein-files-20k` on Hugging Face.

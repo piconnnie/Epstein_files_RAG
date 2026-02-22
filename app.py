@@ -141,7 +141,10 @@ if prompt := st.chat_input("Ask about the Epstein Files..."):
                     st.write(f"Found {len(sources)} relevant excerpts.")
                     status.update(label="✅ Documents found. Generating answer...", state="complete", expanded=False)
                 elif first_item["type"] == "error":
-                    st.error(first_item["content"])
+                    error_msg = first_item["content"]
+                    if "Response" in error_msg and "subscriptable" in error_msg:
+                        error_msg = "A downstream API (like HuggingFace Hub or the LLM Provider) hit a rate limit or returned an unexpected format. Please wait a moment and try again, or check your API keys."
+                    st.error(f"Error starting search: {error_msg}")
                     st.stop()
                 
                 # Now stream the answer
@@ -151,7 +154,10 @@ if prompt := st.chat_input("Ask about the Epstein Files..."):
                             chunk = item["content"]
                             yield chunk
                         elif item["type"] == "error":
-                            st.error(item["content"])
+                            error_msg = item["content"]
+                            if "Response" in error_msg and "subscriptable" in error_msg:
+                                error_msg = "A downstream API (like HuggingFace Hub or the LLM Provider) hit a rate limit or returned an unexpected format. Please wait a moment and try again, or check your API keys."
+                            st.error(f"Error generating answer: {error_msg}")
                             break
                 
                 # Stream to the UI
@@ -171,7 +177,11 @@ if prompt := st.chat_input("Ask about the Epstein Files..."):
                             st.divider()
 
         except Exception as e:
-            full_response = f"Error generating answer: {e}"
+            error_msg = str(e)
+            if "Response" in error_msg and "subscriptable" in error_msg:
+                full_response = "Error generating answer: A downstream API (like HuggingFace Hub or the LLM Provider) hit a rate limit or returned an unexpected format. Please wait a moment and try again, or check your API keys."
+            else:
+                full_response = f"Error generating answer: {error_msg}"
             st.error(full_response)
         
         # Add assistant response to chat history

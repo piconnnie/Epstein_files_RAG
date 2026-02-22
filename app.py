@@ -146,11 +146,9 @@ if prompt := st.chat_input("Ask about the Epstein Files..."):
                 
                 # Now stream the answer
                 def answer_generator():
-                    nonlocal full_response
                     for item in stream_gen:
                         if item["type"] == "answer_chunk":
                             chunk = item["content"]
-                            full_response += chunk
                             yield chunk
                         elif item["type"] == "error":
                             st.error(item["content"])

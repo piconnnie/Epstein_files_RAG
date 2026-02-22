@@ -125,31 +125,41 @@ if prompt := st.chat_input("Ask about the Epstein Files..."):
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
+        sources = []
         
         try:
-            # Prepare chat history for the chain (if supported later, for now just query)
-            # We can pass history if we update rag_engine.py, but for now let's just do single turn
-            # or simple concatenation if needed.
-            
-            # Run RAG
-            # Initialize chain if not already done (it is cached)
             chain = load_chain_v3()
             
-            with st.spinner("Searching and generating answer..."):
-                response_obj = chain.invoke(prompt)
+            # Use columns or status for better UX
+            with st.status("🔍 Searching documents...", expanded=True) as status:
+                stream_gen = chain.stream(prompt)
                 
-                # Handle different return types from LCEL
-                if isinstance(response_obj, dict):
-                    answer = response_obj.get('answer', '')
-                    sources = response_obj.get('context', [])
-                else:
-                    answer = str(response_obj)
-                    sources = []
+                # First chunk should be context
+                first_item = next(stream_gen)
+                if first_item["type"] == "context":
+                    sources = first_item["content"]
+                    st.write(f"Found {len(sources)} relevant excerpts.")
+                    status.update(label="✅ Documents found. Generating answer...", state="complete", expanded=False)
+                elif first_item["type"] == "error":
+                    st.error(first_item["content"])
+                    st.stop()
+                
+                # Now stream the answer
+                def answer_generator():
+                    nonlocal full_response
+                    for item in stream_gen:
+                        if item["type"] == "answer_chunk":
+                            chunk = item["content"]
+                            full_response += chunk
+                            yield chunk
+                        elif item["type"] == "error":
+                            st.error(item["content"])
+                            break
+                
+                # Stream to the UI
+                answer_text = st.write_stream(answer_generator())
+                full_response = answer_text
 
-                # Stream response (simulated for now, or just print)
-                message_placeholder.markdown(answer)
-                full_response = answer
-                
                 # Display sources in an expander
                 if sources:
                     with st.expander("📚 Sources & Evidence"):
@@ -164,7 +174,7 @@ if prompt := st.chat_input("Ask about the Epstein Files..."):
 
         except Exception as e:
             full_response = f"Error generating answer: {e}"
-            message_placeholder.error(full_response)
+            st.error(full_response)
         
         # Add assistant response to chat history
         st.session_state.messages.append({"role": "assistant", "content": full_response})

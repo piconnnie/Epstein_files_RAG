@@ -1,4 +1,6 @@
 import os
+import time
+from typing import List, Dict, Any, Generator
 
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -14,13 +16,58 @@ load_dotenv()
 PERSIST_DIRECTORY = "chroma_db"
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+# Singleton-like cache for embeddings
+_embeddings_cache = None
+
+def get_embeddings():
+    global _embeddings_cache
+    if _embeddings_cache is None:
+        print("DEBUG: Initializing Embedding Model (sentence-transformers/all-MiniLM-L6-v2)")
+        _embeddings_cache = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return _embeddings_cache
+
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
-def get_rag_chain_internal():
-    print("DEBUG: Initializing RAG Chain with model: gemini-flash-latest")
+class ChainAdapter:
+    def __init__(self, chain, retriever, rag_chain_from_docs):
+        self.chain = chain
+        self.retriever = retriever
+        self.rag_chain_from_docs = rag_chain_from_docs
+        
+    def stream(self, query: str) -> Generator[Dict[str, Any], None, None]:
+        """
+        Streams the response to allow app.py to display sources immediately
+        then stream the answer.
+        """
+        try:
+            # 1. Retrieval
+            print(f"DEBUG: Retrieving documents for query: {query}")
+            docs = self.retriever.invoke(query)
+            yield {"type": "context", "content": docs}
+            
+            # 2. Generation
+            print(f"DEBUG: Starting LLM stream...")
+            
+            # Since we already have the docs, we can manually feed them into the rag_chain_from_docs
+            # rag_chain_from_docs expects a dict with "context" and "question"
+            # Since it already has a lambda to format docs, we pass the raw docs list
+            input_dict = {"context": docs, "question": query}
+            
+            for chunk in self.rag_chain_from_docs.stream(input_dict):
+                yield {"type": "answer_chunk", "content": chunk}
+                    
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield {"type": "error", "content": str(e)}
+
+    def invoke(self, query):
+        return self.chain.invoke(query)
+
+def get_rag_chain():
     # 1. Embeddings
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = get_embeddings()
 
     # 2. Vector Store
     if not os.path.exists(PERSIST_DIRECTORY):
@@ -31,38 +78,47 @@ def get_rag_chain_internal():
     # 3. Retriever
     retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
+    chain, rag_chain_from_docs = get_rag_chain_internal(retriever)
+    return ChainAdapter(chain, retriever, rag_chain_from_docs)
+
+def get_rag_chain_internal(retriever):
     # 4. LLM
     llm_provider = os.getenv("LLM_PROVIDER", "google").lower()
     
     if llm_provider == "openai_compatible":
-        # Supports xAI (Grok), Groq, DeepSeek, etc.
         from langchain_openai import ChatOpenAI
-        
-        api_key = os.getenv("OPENAI_API_KEY") # This will store the Grok/Groq key
+        api_key = os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("OPENAI_BASE_URL")
         model_name = os.getenv("OPENAI_MODEL_NAME", "grok-beta")
         
-        print(f"DEBUG: Initializing RAG Chain with OpenAI-compatible provider: {base_url} model: {model_name}")
+        print(f"DEBUG: Initializing LLM: {model_name}")
         
         llm = ChatOpenAI(
             api_key=api_key,
             base_url=base_url,
             model=model_name,
-            temperature=0
+            temperature=0,
+            streaming=True
         )
     else:
         # Default to Google
-        print("DEBUG: Initializing RAG Chain with model: gemini-flash-latest")
         if not GOOGLE_API_KEY:
              raise ValueError("GOOGLE_API_KEY not found. Please set it in .env or use the sidebar.")
-        llm = ChatGoogleGenerativeAI(model="gemini-flash-latest", google_api_key=GOOGLE_API_KEY, temperature=0, convert_system_message_to_human=True)
+        print("DEBUG: Initializing LLM: gemini-flash-latest")
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-flash-latest", 
+            google_api_key=GOOGLE_API_KEY, 
+            temperature=0, 
+            convert_system_message_to_human=True,
+            streaming=True
+        )
 
     # 5. Prompt
     prompt_template = """You are an expert AI researcher assisting with the Epstein Files. 
     Your goal is to provide **detailed, comprehensive, and fact-based answers** based ONLY on the provided context.
     
     Guidelines:
-    - **Be Thorough**: Do not be brief. Explain the context, who the people are, and what the documents say about them.
+    - **Be Thorough**: Explain the context, the people involved, and what the documents say about them.
     - **No Speculation**: Stick strictly to the text provided.
     - **Citations**: Mention specific details from the text.
     - **Tone**: Professional, objective, and investigative.
@@ -80,11 +136,6 @@ def get_rag_chain_internal():
     )
 
     # 6. Chain (LCEL)
-    # We want to return both the answer and the source documents.
-    # Structure:
-    # 1. Retrieve docs based on question
-    # 2. Pass context and question to LLM chain
-    
     rag_chain_from_docs = (
         RunnablePassthrough.assign(context=(lambda x: format_docs(x["context"])))
         | prompt
@@ -96,29 +147,4 @@ def get_rag_chain_internal():
         {"context": retriever, "question": RunnablePassthrough()}
     ).assign(answer=rag_chain_from_docs)
 
-    return rag_chain_with_sources
-
-import time
-
-class ChainAdapter:
-    def __init__(self, chain):
-        self.chain = chain
-        
-    def invoke(self, query):
-        # Simple retry logic for 429s
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # The underlying LCEL chain accepts a string input directly
-                return self.chain.invoke(query)
-            except Exception as e:
-                error_str = str(e)
-                if "429" in error_str and attempt < max_retries - 1:
-                    print(f"DEBUG: 429 Error. Retrying in {(attempt + 1) * 5}s...")
-                    time.sleep((attempt + 1) * 5)
-                    continue
-                raise e
-
-def get_rag_chain():
-    chain = get_rag_chain_internal()
-    return ChainAdapter(chain)
+    return rag_chain_with_sources, rag_chain_from_docs
